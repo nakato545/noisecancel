@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ノイキャン実験 完全版</title>
+    <link rel="icon" href="SCOPEロゴ通常版-768x768.webp" type="image/webp">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            min-height: 100vh; margin: 0; background-color: #f0f2f5; padding: 10px; box-sizing: border-box;
+        }
+        .container {
+            background: white; padding: 15px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            width: 100%; max-width: 400px; text-align: center; box-sizing: border-box;
+        }
+        h3 { margin: 0 0 12px 0; color: #333; font-size: 1.1rem; }
+        .mode-selector { 
+            margin-bottom: 12px; padding: 6px; background: #eee; border-radius: 10px; 
+            font-weight: bold; display: flex; justify-content: space-around; font-size: 0.8rem;
+        }
+        .mode-selector label { cursor: pointer; flex: 1; padding: 2px; }
+        .controls-box { background: #f9f9f9; padding: 10px; border-radius: 12px; margin-bottom: 12px; border: 1px solid #eee; }
+        .control-group { margin: 5px 0; text-align: left; }
+        .slider-label { display: flex; justify-content: space-between; font-weight: bold; font-size: 0.85rem; margin-bottom: 2px; }
+        
+        input[type="range"] { 
+            width: 100%; height: 6px; -webkit-appearance: none; background: #ddd; border-radius: 6px; outline: none; margin: 10px 0;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 28px; height: 28px; background: #4A90E2; border-radius: 50%; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        #seek-slider::-webkit-slider-thumb { background: #2ecc71; width: 32px; height: 32px; }
+        
+        input[type="file"] { width: 100%; padding: 4px; background: #fff; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; font-size: 0.75rem; }
+        
+        .speaker-ui { margin: 10px 0; padding: 10px; background: #f0f0f0; border-radius: 15px; }
+        .phase-toggle-area { margin-bottom: 8px; }
+        #phase-toggle { 
+            width: 100%; padding: 10px; border: none; border-radius: 10px; 
+            font-weight: bold; cursor: pointer; font-size: 0.85rem; transition: 0.3s;
+        }
+        .phase-inverse { background: #9b59b6; color: white; }
+        .phase-normal { background: #f39c12; color: white; }
+
+        .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        button.toggle { padding: 10px; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; transition: 0.2s; font-size: 0.75rem; background: #ddd; color: #666; }
+        
+        #left-btn.active.inverse { background: #9b59b6; color: white; }
+        #left-btn.active.normal { background: #f39c12; color: white; }
+        #right-btn.active { background: #4A90E2; color: white; }
+
+        .main-btn { width: 100%; color: white; font-size: 1rem; margin-top: 8px; padding: 12px; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; }
+        .btn-playing { background: #2ecc71; box-shadow: 0 4px #27ae60; }
+        .btn-stopped { background: #e74c3c; box-shadow: 0 4px #c0392b; }
+        .main-btn:active { transform: translateY(2px); box-shadow: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h3>ノイキャンシミュレーション</h3>
+    
+    <div class="mode-selector">
+        <label><input type="radio" name="mode" value="osc" checked> 正弦波</label>
+        <label><input type="radio" name="mode" value="file"> ファイル</label>
+    </div>
+
+    <div class="controls-box">
+        <div id="osc-controls" class="control-group">
+            <div class="slider-label"><span>音の高さ</span><span><span id="freq-display">440</span>Hz</span></div>
+            <input type="range" id="freq-slider" min="100" max="1000" value="440" step="1">
+        </div>
+
+        <div id="file-controls" class="control-group" style="display: none;">
+            <input type="file" id="audio-file" accept="audio/*">
+            <div class="slider-label" style="margin-top: 8px;">
+                <span>再生位置 (ループON)</span>
+                <span><span id="current-time">0:00</span> / <span id="duration-time">0:00</span></span>
+            </div>
+            <input type="range" id="seek-slider" min="0" max="100" value="0" step="0.01">
+        </div>
+
+        <div class="control-group">
+            <div class="slider-label"><span>音の大きさ</span><span><span id="vol-display">100</span>%</span></div>
+            <input type="range" id="vol-slider" min="0" max="100" value="100" step="1">
+        </div>
+    </div>
+
+    <div class="speaker-ui">
+        <div class="phase-toggle-area">
+            <button id="phase-toggle" class="phase-inverse">モード：逆位相（打ち消し）</button>
+        </div>
+        <div class="btn-grid">
+            <button id="left-btn" class="toggle active inverse">左 (逆相)</button>
+            <button id="right-btn" class="toggle active">右 (正相)</button>
+        </div>
+    </div>
+
+    <button id="master-btn" class="main-btn btn-stopped">再生開始</button>
+</div>
+
+<script>
+    let audioCtx, osc, audioSource, gainL, gainR, masterGain, merger, inverter;
+    let audioTag = new Audio();
+    audioTag.crossOrigin = "anonymous";
+    audioTag.loop = true;
+    audioTag.playsInline = true; // iOS Safari対策
+    
+    let isPlaying = false;
+    let isUserDragging = false; 
+    let currentMode = 'osc';
+    let isInversePhase = true;
+
+    const masterBtn = document.getElementById('master-btn');
+    const phaseBtn = document.getElementById('phase-toggle');
+    const leftBtn = document.getElementById('left-btn');
+    const rightBtn = document.getElementById('right-btn');
+    const freqSlider = document.getElementById('freq-slider');
+    const volSlider = document.getElementById('vol-slider');
+    const fileInput = document.getElementById('audio-file');
+    const seekSlider = document.getElementById('seek-slider');
+    const currentTimeDisp = document.getElementById('current-time');
+    const durationTimeDisp = document.getElementById('duration-time');
+
+    document.querySelectorAll('input[name="mode"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            currentMode = e.target.value;
+            document.getElementById('osc-controls').style.display = currentMode === 'osc' ? 'block' : 'none';
+            document.getElementById('file-controls').style.display = currentMode === 'file' ? 'block' : 'none';
+            stopAll();
+        });
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            audioTag.src = URL.createObjectURL(file);
+            audioTag.load();
+        }
+    });
+
+    audioTag.addEventListener('loadedmetadata', () => {
+        seekSlider.max = audioTag.duration;
+        durationTimeDisp.textContent = formatTime(audioTag.duration);
+    });
+
+    audioTag.addEventListener('timeupdate', () => {
+        if (isPlaying && !isUserDragging) {
+            seekSlider.value = audioTag.currentTime;
+            currentTimeDisp.textContent = formatTime(audioTag.currentTime);
+        }
+    });
+
+    seekSlider.addEventListener('mousedown', () => { isUserDragging = true; });
+    seekSlider.addEventListener('touchstart', () => { isUserDragging = true; });
+    seekSlider.addEventListener('input', (e) => { currentTimeDisp.textContent = formatTime(e.target.value); });
+    seekSlider.addEventListener('change', (e) => { audioTag.currentTime = e.target.value; isUserDragging = false; });
+    window.addEventListener('mouseup', () => { isUserDragging = false; });
+    window.addEventListener('touchend', () => { isUserDragging = false; });
+
+    function formatTime(seconds) {
+        if (isNaN(seconds)) return "0:00";
+        const min = Math.floor(seconds / 60);
+        const sec = Math.floor(seconds % 60);
+        return `${min}:${sec.toString().padStart(2, '0')}`;
+    }
+
+    phaseBtn.addEventListener('click', function() {
+        isInversePhase = !isInversePhase;
+        if (isInversePhase) {
+            this.textContent = "モード：逆位相（打ち消し）";
+            this.className = "phase-inverse";
+            leftBtn.textContent = "左 (逆相)";
+            leftBtn.classList.add('inverse');
+            leftBtn.classList.remove('normal');
+            if (inverter) inverter.gain.setTargetAtTime(-1, audioCtx.currentTime, 0.01);
+        } else {
+            this.textContent = "モード：同位相（増幅）";
+            this.className = "phase-normal";
+            leftBtn.textContent = "左 (同相)";
+            leftBtn.classList.add('normal');
+            leftBtn.classList.remove('inverse');
+            if (inverter) inverter.gain.setTargetAtTime(1, audioCtx.currentTime, 0.01);
+        }
+    });
+
+    function initAudio() {
+        if (audioCtx) return;
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        gainL = audioCtx.createGain();
+        gainR = audioCtx.createGain();
+        masterGain = audioCtx.createGain();
+        inverter = audioCtx.createGain();
+        merger = audioCtx.createChannelMerger(2);
+
+        inverter.gain.value = isInversePhase ? -1 : 1; 
+        masterGain.gain.value = volSlider.value / 100;
+        
+        gainL.gain.value = leftBtn.classList.contains('active') ? 1 : 0;
+        gainR.gain.value = rightBtn.classList.contains('active') ? 1 : 0;
+
+        inverter.connect(gainL);
+        gainL.connect(merger, 0, 0); 
+        gainR.connect(merger, 0, 1); 
+        merger.connect(masterGain);
+        masterGain.connect(audioCtx.destination);
+        
+        // ファイル音源を一度だけ作成して接続
+        audioSource = audioCtx.createMediaElementSource(audioTag);
+    }
+
+    function playCurrentMode() {
+        initAudio();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+
+        if (currentMode === 'osc') {
+            osc = audioCtx.createOscillator();
+            osc.frequency.setValueAtTime(freqSlider.value, audioCtx.currentTime);
+            osc.connect(inverter);
+            osc.connect(gainR);
+            osc.start();
+        } else {
+            // ファイルモード時はOSCを切断し、Sourceを接続
+            audioSource.connect(inverter);
+            audioSource.connect(gainR);
+            audioTag.play();
+        }
+        isPlaying = true;
+        masterBtn.textContent = "一時停止";
+        masterBtn.className = "main-btn btn-playing";
+    }
+
+    function stopAll() {
+        if (osc) {
+            try { osc.stop(); osc.disconnect(); } catch(e){}
+            osc = null;
+        }
+        audioTag.pause();
+        if (audioSource) audioSource.disconnect();
+        isPlaying = false;
+        masterBtn.textContent = "再生開始";
+        masterBtn.className = "main-btn btn-stopped";
+    }
+
+    masterBtn.addEventListener('click', () => isPlaying ? stopAll() : playCurrentMode());
+
+    leftBtn.addEventListener('click', function() {
+        this.classList.toggle('active');
+        if (gainL) gainL.gain.setTargetAtTime(this.classList.contains('active') ? 1 : 0, audioCtx.currentTime, 0.01);
+    });
+
+    rightBtn.addEventListener('click', function() {
+        this.classList.toggle('active');
+        if (gainR) gainR.gain.setTargetAtTime(this.classList.contains('active') ? 1 : 0, audioCtx.currentTime, 0.01);
+    });
+
+    freqSlider.addEventListener('input', (e) => {
+        document.getElementById('freq-display').textContent = e.target.value;
+        if (osc) osc.frequency.setTargetAtTime(e.target.value, audioCtx.currentTime, 0.05);
+    });
+
+    volSlider.addEventListener('input', (e) => {
+        document.getElementById('vol-display').textContent = e.target.value;
+        if (masterGain) masterGain.gain.setTargetAtTime(e.target.value / 100, audioCtx.currentTime, 0.05);
+    });
+</script>
+</body>
+</html>
